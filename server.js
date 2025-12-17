@@ -102,9 +102,26 @@ app.post('/api/fs/mkdir', (req, res) => {
 
 // Proxy Endpoint
 app.get('/api/proxy', (req, res) => {
-    const targetUrl = req.query.url;
+    let targetUrl = req.query.url;
     if (!targetUrl) {
         return res.status(400).send('URL parameter is required');
+    }
+
+    // Handle extra query parameters (e.g., search queries from forms)
+    // If the browser requested /api/proxy?url=google.com/search&q=test
+    // req.query is { url: '...', q: 'test' }
+    // We need to append 'q=test' to targetUrl
+    const extraParams = new URLSearchParams();
+    Object.keys(req.query).forEach(key => {
+        if (key !== 'url') {
+            extraParams.append(key, req.query[key]);
+        }
+    });
+    
+    // Append extra params to targetUrl
+    if (extraParams.toString()) {
+        const hasQuery = targetUrl.includes('?');
+        targetUrl += (hasQuery ? '&' : '?') + extraParams.toString();
     }
 
     try {
@@ -127,51 +144,57 @@ app.get('/api/proxy', (req, res) => {
             }
         });
         
-        // Ensure we don't ask for compression since we manipulate HTML strings
-        delete options.headers['accept-encoding'];
+        delete options.headers['accept-encoding']; // Prevent compression so we can edit text
 
         const proxyReq = protocol.request(options, (proxyRes) => {
             // Handle Redirects
             if (proxyRes.statusCode >= 300 && proxyRes.statusCode < 400 && proxyRes.headers.location) {
-                return res.redirect('/api/proxy?url=' + encodeURIComponent(new URL(proxyRes.headers.location, targetUrl).toString()));
+                // Resolve relative redirects
+                const redirectUrl = new URL(proxyRes.headers.location, targetUrl).toString();
+                return res.redirect('/api/proxy?url=' + encodeURIComponent(redirectUrl));
             }
 
             // Copy headers from target to client
             Object.keys(proxyRes.headers).forEach(key => {
-                // Remove content-encoding if we are decoding (node http does auto decoding if we don't send accept-encoding? No, it just gives raw stream. 
-                // If server sends gzip anyway, we are in trouble if we try to modify HTML. 
-                // But usually servers respect missing Accept-Encoding.
                 if (key !== 'content-encoding' && key !== 'x-frame-options' && key !== 'content-security-policy') {
                      res.setHeader(key, proxyRes.headers[key]);
                 }
             });
 
-            // If HTML, rewrite links
             const contentType = proxyRes.headers['content-type'] || '';
             if (contentType.includes('text/html')) {
                 let data = '';
                 proxyRes.on('data', chunk => data += chunk);
                 proxyRes.on('end', () => {
-                    // Regex to find src, href, action
-                    // This is a naive implementation and might break on complex scripts or escaped quotes
-                    const modifiedData = data.replace(/(href|src|action)\s*=\s*(['"])(.*?)\2/gi, (match, attr, quote, url) => {
+                    // 1. Basic Regex Replacement for Assets (Images, CSS)
+                    // We still do this server-side to help initial load appearance
+                    let modifiedData = data.replace(/(href|src|action)\s*=\s*(['"])(.*?)\2/gi, (match, attr, quote, url) => {
                         try {
-                            // Ignore data: URLs, anchors, etc
-                            if (url.startsWith('data:') || url.startsWith('#') || url.startsWith('javascript:')) {
+                            if (url.startsWith('data:') || url.startsWith('#') || url.startsWith('javascript:') || url.startsWith('mailto:')) {
                                 return match;
                             }
+                            // Resolve absolute URL
                             const absoluteUrl = new URL(url, targetUrl).href;
+                            // Proxy it
                             const proxyUrl = '/api/proxy?url=' + encodeURIComponent(absoluteUrl);
                             return `${attr}=${quote}${proxyUrl}${quote}`;
                         } catch (e) {
-                            return match; // Keep original if resolution fails
+                            return match;
                         }
                     });
+                    
+                    // 2. Inject Proxy Helper Script
+                    // This script handles clicks and form submissions more reliably than regex
+                    const scriptTag = '<script src="/js/proxy-helper.js"></script>';
+                    if (modifiedData.includes('</body>')) {
+                        modifiedData = modifiedData.replace('</body>', scriptTag + '</body>');
+                    } else {
+                        modifiedData += scriptTag;
+                    }
                     
                     res.send(modifiedData);
                 });
             } else {
-                // Pipe other content directly
                 proxyRes.pipe(res);
             }
         });
