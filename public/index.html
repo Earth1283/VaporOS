@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>WebOS</title>
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+    <div id="top-bar">
+        <div class="left-section">
+            <span id="system-logo">🍎</span>
+            <span id="active-app-name" style="font-weight: bold;">Desktop</span>
+            <span class="menu-item">File</span>
+            <span class="menu-item">Edit</span>
+            <span class="menu-item">View</span>
+            <span class="menu-item">Help</span>
+        </div>
+        <div class="right-section">
+            <span class="status-item">🔋 100%</span>
+            <span class="status-item">📶 WiFi</span>
+            <span id="clock">12:00 PM</span>
+        </div>
+    </div>
+
+    <div id="desktop">
+        <!-- Desktop Icons will be rendered here -->
+        <div class="desktop-icons" id="desktop-icons"></div>
+
+        <!-- Windows Container -->
+        <div id="windows-container"></div>
+    </div>
+
+    <div id="taskbar">
+        <button id="start-btn">Start</button>
+        <div id="taskbar-apps"></div>
+        <!-- Clock moved to top bar -->
+    </div>
+
+    <div id="start-menu" class="hidden">
+        <ul>
+            <li onclick="appManager.open('explorer')">File Explorer</li>
+            <li onclick="appManager.open('editor')">Text Editor</li>
+            <li onclick="appManager.open('terminal')">Terminal</li>
+            <li onclick="appManager.open('calculator')">Calculator</li>
+            <li onclick="appManager.open('settings')">Settings</li>
+        </ul>
+    </div>
+
+    <div id="dialog-overlay" class="hidden">
+        <div class="dialog-box">
+            <h3 id="dialog-title">Title</h3>
+            <p id="dialog-message">Message content goes here.</p>
+            <div class="dialog-input-container hidden" id="dialog-input-container">
+                <input type="text" id="dialog-input">
+            </div>
+            <div class="dialog-buttons">
+                <button id="dialog-cancel-btn" class="secondary-btn">Cancel</button>
+                <button id="dialog-confirm-btn" class="primary-btn">OK</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Templates for Windows -->
+    <template id="window-template">
+        <div class="window">
+            <div class="title-bar">
+                <span class="window-title">App Name</span>
+                <div class="window-controls">
+                    <button class="minimize-btn">-</button>
+                    <button class="maximize-btn">□</button>
+                    <button class="close-btn">×</button>
+                </div>
+            </div>
+            <div class="window-content"></div>
+            <div class="resize-handle"></div>
+        </div>
+    </template>
+
+    <script src="js/window-manager.js"></script>
+    <script src="js/filesystem.js"></script>
+    <script src="js/dialog.js"></script>
+    <script src="js/context-menu.js"></script>
+    <script src="js/apps.js"></script>
+    <script src="js/main.js"></script>
+</body>
+</html>
