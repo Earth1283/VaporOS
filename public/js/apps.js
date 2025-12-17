@@ -422,6 +422,76 @@ const Apps = {
         }
     },
     
+    browser: {
+        title: 'Browser',
+        icon: '🌐',
+        render: (container, win) => {
+            container.style.display = 'flex';
+            container.style.flexDirection = 'column';
+            
+            // Toolbar
+            const toolbar = document.createElement('div');
+            toolbar.className = 'app-toolbar';
+            toolbar.style.display = 'flex';
+            toolbar.style.gap = '5px';
+            toolbar.style.padding = '5px';
+            toolbar.style.backgroundColor = '#f0f0f0'; // Light gray for contrast
+            toolbar.style.borderBottom = '1px solid #ccc';
+
+            const backBtn = document.createElement('button');
+            backBtn.textContent = '←';
+            
+            const forwardBtn = document.createElement('button');
+            forwardBtn.textContent = '→';
+
+            const urlInput = document.createElement('input');
+            urlInput.type = 'text';
+            urlInput.placeholder = 'http://...';
+            urlInput.style.flex = '1';
+            urlInput.style.padding = '4px';
+            urlInput.value = win.data?.url || 'https://www.google.com';
+
+            const goBtn = document.createElement('button');
+            goBtn.textContent = 'Go';
+
+            toolbar.append(backBtn, forwardBtn, urlInput, goBtn);
+
+            // Iframe
+            const iframe = document.createElement('iframe');
+            iframe.style.flex = '1';
+            iframe.style.border = 'none';
+            iframe.style.backgroundColor = 'white';
+            iframe.sandbox = 'allow-forms allow-scripts allow-same-origin allow-popups'; // Safety first, but allow normal web stuff
+            
+            container.innerHTML = '';
+            container.append(toolbar, iframe);
+
+            const navigate = (url) => {
+                if(!url.startsWith('http')) url = 'https://' + url;
+                urlInput.value = url;
+                // Use the proxy
+                iframe.src = '/api/proxy?url=' + encodeURIComponent(url);
+                win.data = { url };
+            };
+
+            goBtn.onclick = () => navigate(urlInput.value);
+            urlInput.onkeydown = (e) => { if(e.key === 'Enter') navigate(urlInput.value); };
+            
+            // History navigation (might work since it is same-origin proxy)
+            backBtn.onclick = () => {
+                try { iframe.contentWindow.history.back(); } catch(e) { console.log('Back failed', e); }
+            };
+             forwardBtn.onclick = () => {
+                try { iframe.contentWindow.history.forward(); } catch(e) { console.log('Fwd failed', e); }
+            };
+
+            // Initial load
+            if (urlInput.value) {
+                navigate(urlInput.value);
+            }
+        }
+    },
+    
     calculator: {
         title: 'Calculator',
         icon: '🧮',
