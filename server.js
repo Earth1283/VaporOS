@@ -100,114 +100,96 @@ app.post('/api/fs/mkdir', (req, res) => {
     }
 });
 
-// Proxy Endpoint
-app.get('/api/proxy', (req, res) => {
-    let targetUrl = req.query.url;
+const proxy = require('express-http-proxy');
+
+// ... existing code ...
+
+// Proxy Endpoint using express-http-proxy
+app.use('/api/proxy', (req, res, next) => {
+    const targetUrl = req.query.url;
     if (!targetUrl) {
         return res.status(400).send('URL parameter is required');
     }
 
-    // Handle extra query parameters (e.g., search queries from forms)
-    // If the browser requested /api/proxy?url=google.com/search&q=test
-    // req.query is { url: '...', q: 'test' }
-    // We need to append 'q=test' to targetUrl
-    const extraParams = new URLSearchParams();
-    Object.keys(req.query).forEach(key => {
-        if (key !== 'url') {
-            extraParams.append(key, req.query[key]);
-        }
-    });
-    
-    // Append extra params to targetUrl
-    if (extraParams.toString()) {
-        const hasQuery = targetUrl.includes('?');
-        targetUrl += (hasQuery ? '&' : '?') + extraParams.toString();
+    let parsedUrl;
+    try {
+        parsedUrl = new URL(targetUrl);
+    } catch (err) {
+        return res.status(400).send('Invalid URL: ' + err.message);
     }
 
-    try {
-        const parsedUrl = new URL(targetUrl);
-        const protocol = parsedUrl.protocol === 'https:' ? https : http;
+    proxy(parsedUrl.origin, {
+        proxyReqPathResolver: (req) => {
+            // Reconstruct the target path + query
+            // Start with the path provided in the 'url' param
+            let targetPath = parsedUrl.pathname + parsedUrl.search;
 
-        const options = {
-            hostname: parsedUrl.hostname,
-            port: parsedUrl.port || (parsedUrl.protocol === 'https:' ? 443 : 80),
-            path: parsedUrl.pathname + parsedUrl.search,
-            method: 'GET',
-            headers: {}
-        };
-
-        // Forward headers from client to target
-        const headersToForward = ['user-agent', 'cookie', 'accept', 'accept-language'];
-        headersToForward.forEach(header => {
-            if (req.headers[header]) {
-                options.headers[header] = req.headers[header];
-            }
-        });
-        
-        delete options.headers['accept-encoding']; // Prevent compression so we can edit text
-
-        const proxyReq = protocol.request(options, (proxyRes) => {
-            // Handle Redirects
-            if (proxyRes.statusCode >= 300 && proxyRes.statusCode < 400 && proxyRes.headers.location) {
-                // Resolve relative redirects
-                const redirectUrl = new URL(proxyRes.headers.location, targetUrl).toString();
-                return res.redirect('/api/proxy?url=' + encodeURIComponent(redirectUrl));
-            }
-
-            // Copy headers from target to client
-            Object.keys(proxyRes.headers).forEach(key => {
-                if (key !== 'content-encoding' && key !== 'x-frame-options' && key !== 'content-security-policy') {
-                     res.setHeader(key, proxyRes.headers[key]);
+            // Handle extra query params (e.g. from search forms)
+            const extraParams = new URLSearchParams();
+            Object.keys(req.query).forEach(key => {
+                if (key !== 'url') {
+                    extraParams.append(key, req.query[key]);
                 }
             });
 
-            const contentType = proxyRes.headers['content-type'] || '';
+            if (extraParams.toString()) {
+                const separator = targetPath.includes('?') ? '&' : '?';
+                targetPath += separator + extraParams.toString();
+            }
+            
+            return targetPath;
+        },
+        userResHeaderDecorator(headers, userReq, userRes, proxyReq, proxyRes) {
+            // Handle Redirects: Rewrite location header to point back to proxy
+            if (headers['location']) {
+                try {
+                    const absoluteRedirect = new URL(headers['location'], targetUrl).href;
+                    headers['location'] = '/api/proxy?url=' + encodeURIComponent(absoluteRedirect);
+                } catch(e) {}
+            }
+            // Remove CSP and framing options to allow embedding
+            delete headers['content-security-policy'];
+            delete headers['x-frame-options'];
+            return headers;
+        },
+        userResDecorator: (proxyRes, proxyResData, userReq, userRes) => {
+            const contentType = userRes.get('Content-Type') || '';
+            
             if (contentType.includes('text/html')) {
-                let data = '';
-                proxyRes.on('data', chunk => data += chunk);
-                proxyRes.on('end', () => {
-                    // 1. Basic Regex Replacement for Assets (Images, CSS)
-                    // We still do this server-side to help initial load appearance
-                    let modifiedData = data.replace(/(href|src|action)\s*=\s*(['"])(.*?)\2/gi, (match, attr, quote, url) => {
-                        try {
-                            if (url.startsWith('data:') || url.startsWith('#') || url.startsWith('javascript:') || url.startsWith('mailto:')) {
-                                return match;
-                            }
-                            // Resolve absolute URL
-                            const absoluteUrl = new URL(url, targetUrl).href;
-                            // Proxy it
-                            const proxyUrl = '/api/proxy?url=' + encodeURIComponent(absoluteUrl);
-                            return `${attr}=${quote}${proxyUrl}${quote}`;
-                        } catch (e) {
+                let html = proxyResData.toString('utf8');
+                
+                // 1. Basic Regex Replacement
+                html = html.replace(/(href|src|action)\s*=\s*(['"])(.*?)\2/gi, (match, attr, quote, url) => {
+                    try {
+                        if (url.startsWith('data:') || url.startsWith('#') || url.startsWith('javascript:') || url.startsWith('mailto:')) {
                             return match;
                         }
-                    });
-                    
-                    // 2. Inject Proxy Helper Script
-                    // This script handles clicks and form submissions more reliably than regex
-                    const scriptTag = '<script src="/js/proxy-helper.js"></script>';
-                    if (modifiedData.includes('</body>')) {
-                        modifiedData = modifiedData.replace('</body>', scriptTag + '</body>');
-                    } else {
-                        modifiedData += scriptTag;
+                        const absoluteUrl = new URL(url, targetUrl).href;
+                        const proxyUrl = '/api/proxy?url=' + encodeURIComponent(absoluteUrl);
+                        return `${attr}=${quote}${proxyUrl}${quote}`;
+                    } catch (e) {
+                        return match;
                     }
-                    
-                    res.send(modifiedData);
                 });
-            } else {
-                proxyRes.pipe(res);
+
+                // 2. Inject Proxy Helper Script
+                const scriptTag = '<script src="/js/proxy-helper.js"></script>';
+                if (html.includes('</body>')) {
+                    html = html.replace('</body>', scriptTag + '</body>');
+                } else {
+                    html += scriptTag;
+                }
+                
+                return html;
             }
-        });
-
-        proxyReq.on('error', (err) => {
-            res.status(500).send('Proxy error: ' + err.message);
-        });
-        
-        proxyReq.end();
-
-    } catch (err) {
-        res.status(400).send('Invalid URL: ' + err.message);
-    }
+            
+            return proxyResData;
+        },
+        // handle errors
+        proxyErrorHandler: (err, res, next) => {
+             res.status(500).send('Proxy Error: ' + err.message);
+        }
+    })(req, res, next);
 });
 
 app.listen(PORT, () => {
