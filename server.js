@@ -192,6 +192,12 @@ app.use('/api/proxy', (req, res, next) => {
     })(req, res, next);
 });
 
-app.listen(PORT, () => {
-    console.log(`Virtual OS running at http://localhost:${PORT}`);
+// Load SSL Certificates
+const sslOptions = {
+    key: fs.readFileSync(path.join(__dirname, 'certs', 'server.key')),
+    cert: fs.readFileSync(path.join(__dirname, 'certs', 'server.cert'))
+};
+
+https.createServer(sslOptions, app).listen(PORT, () => {
+    console.log(`Virtual OS securely running at https://localhost:${PORT}`);
 });
